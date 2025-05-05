@@ -1,0 +1,129 @@
+---
+title: "creative-data-visualization"
+author: "Yen Do"
+format: html
+editor: visual
+---
+
+RNA-seq data can be overwhelming — thousands of genes, each with its own expression pattern. Usually, scientists use heatmap to visualize gene expression pattern, but sometime it hard to identify top DEGs. In this creative data visualization, I used a method called UMAP to project genes into a 2D space based on how their expression changes between two temperature conditions: 27°C and 21°C in model plant *Arabidopsis thaliana*. In the map, genes with similar expression patterns end up close together, forming visible "neighborhoods" of behavior.
+
+Moreover, to make the visualization more engaging and memorable, I turned the top 10 most significantly differentially expressed genes into sun — tiny, eye-catching icons scattered across the plot (sun symbol implies hot spot, like highly differentialy expressed genes). These sun icon highlight the most responsive genes and add some easy memmorable sparks to the data.
+
+In the end, I combined rigorous analysis with creative design to build a single plot that helps both scientists and non-experts quickly spot what matters in the data.
+
+### Step 1: Import libraries
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggimage)
+library(umap)
+library(scales)
+library(viridis)
+library(readr)
+library(ggrepel)
+library(org.At.tair.db)
+```
+
+I used the public data set from paper "LHP1 and INO80 cooperate with ethylene signaling for warm ambient temperature response by activating specific bivalent genes" of Shao et al. 2024. In this paper, authors observed changes in plant phenotype in warm temperature compared to normal condition. Then by using RNA-seq, authors can indentify key gene involving heat response, that could benefit further studies for heat resistance crops. Here is step-by-step how I transform RNA-seq data to HOT UMAP.
+
+### Step 2: Loading data set and data wranglings
+
+```{r}
+# Load DEG data
+df <- read_csv("filtered_DEG_for_umap.csv")
+
+# Clean and transform
+df <- df |>
+  mutate(
+    log_baseMean = log10(baseMean + 1),
+    log_padj = -log10(padj + 1e-10)
+  )
+
+# Prepare input for UMAP
+umap_input <- df |>
+  dplyr::select(log2FoldChange, log_baseMean, log_padj) |>
+  scale()  # scale input features
+
+# Run UMAP
+set.seed(42)
+umap_result <- umap::umap(umap_input)
+
+# Add UMAP coordinates to dataframe
+df$UMAP1 <- umap_result$layout[,1]
+df$UMAP2 <- umap_result$layout[,2]
+```
+
+### Step 3: Identify top 10 DEGs for sunoverlay (also, adding symbols of gene)
+
+```{r}
+# Identify top 10 DEGs for sun overlay
+top_genes <- df |>
+  arrange(padj) |>
+  slice_head(n = 10)
+
+# Get mapping
+top_genes$gene_name <- mapIds(
+  org.At.tair.db,
+  keys = top_genes$gene_id,
+  column = "SYMBOL",
+  keytype = "TAIR",
+  multiVals = "first"
+)
+top_genes$label <- paste0(top_genes$gene_id, " | ", top_genes$gene_name)
+
+# Assign sun icons (same image for all)
+top_genes$sun <- "sun.png"
+```
+
+### Step 4: Create UMAP
+
+```{r}
+# UMAP plot for all genes
+base_plot <- ggplot(df, aes(x = UMAP1, y = UMAP2)) +
+  geom_point(aes(size = log_baseMean, color = log2FoldChange), alpha = 0.6) +
+  scale_color_gradient2(
+    low = "blue", mid = "gray90", high = "red", midpoint = 0,
+    name = "log2 Fold Change"
+  ) +
+  scale_size(range = c(1, 6), name = "log10 baseMean") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "A.thaliana UMAP of DEGs in warm temperature",
+    subtitle = "Top 10 DEGs showns as sun-icon",
+    x = "UMAP 1",
+    y = "UMAP 2"
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    legend.position = "right"
+  )
+
+# Overlay sun icons on top genes
+sun_plot <- base_plot +
+  geom_image(
+    data = top_genes,
+    aes(x = UMAP1, y = UMAP2, image = sun),
+    size = 0.1,
+    inherit.aes = FALSE
+  ) +
+  geom_text_repel(
+  data = top_genes,
+  aes(x = UMAP1, y = UMAP2, label = label),
+  color = "red",
+  size = 3.5,
+  box.padding = 0.4,
+  segment.color = "gray40"
+)
+
+# Display plot
+print(sun_plot)
+```
+
+### Step 5: Save the plot
+
+```{r}
+ggsave("sun_UMAP_RNAseq.png", sun_plot, width = 12, height = 8, dpi = 300)
+```
